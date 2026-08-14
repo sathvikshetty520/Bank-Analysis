@@ -10,16 +10,22 @@ nothing else in the pipeline needs to change.
 # app/parsers/registry.py
 from app.parsers.base import BaseParser
 from app.parsers.pdf_parser import PdfParser
+from app.parsers.markdown_parser import MarkdownTableParser
 from app.models.transaction import ParseResult
 
 REGISTERED_PARSERS: list[BaseParser] = [
     PdfParser(),
-    # CsvExcelParser(),       <- add later
-    # OcrLlmFallbackParser()  <- add later, for scanned PDFs
+    MarkdownTableParser(),
 ]
 
 def parse_file(file_path: str, account_id: str) -> ParseResult:
     for parser in REGISTERED_PARSERS:
         if parser.can_parse(file_path):
-            return parser.extract(file_path, account_id)
-    raise ValueError(f"No parser could handle file '{file_path}'.")
+            try:
+                return parser.extract(file_path, account_id)
+            except Exception:
+                continue
+    raise ValueError(
+        f"No parser could handle file '{file_path}'. "
+        "Supported so far: PDF (text-based), Markdown/text tables."
+    )

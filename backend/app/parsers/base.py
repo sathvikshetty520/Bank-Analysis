@@ -1,13 +1,3 @@
-# app/parsers/base.py
-"""
-Base Parser Interface
-----------------------
-Every bank/format gets its own parser class implementing this interface.
-The pipeline tries each parser's can_parse() until one accepts the file,
-then calls extract(). This isolates each format so adding a new bank
-layout later never requires touching existing code.
-"""
-
 
 from abc import ABC, abstractmethod
 from app.models.transaction import ParseResult
@@ -23,7 +13,8 @@ class BaseParser(ABC):
  
 COLUMN_SYNONYMS = {
     "date": ["date", "txn date", "trans date", "transaction date", "value date", "posting date"],
-    "narration": ["narration", "description", "particulars", "details", "remarks", "transaction remarks"],
+    "narration": ["narration", "description", "particulars", "details", "remarks", "transaction remarks",
+                  "transaction details"],
     "ref_no": ["ref no", "reference no", "ref number", "cheque no", "chq no", "transaction id", "utr", "utr no",
                "cheque / instrument", "cheque/instrument", "instrument"],
     "debit": ["debit", "withdrawal", "withdrawal amt", "withdrawal amount", "dr", "debit amount", "debits"],
@@ -46,4 +37,3 @@ def map_columns(headers: list[str]) -> dict[str, str]:
                 result[std_field] = original
                 break
     return result
- 

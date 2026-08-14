@@ -16,124 +16,108 @@ whatever accounts are available and gets more powerful as more
 statements are added to the same investigation.
 """
 
-import re
 import networkx as nx
-from datetime import timedelta
 from app.models.transaction import Transaction
 
 
 def extract_counterparty(narration: str) -> str:
     """
     Bank narrations embed the other party's name/account in inconsistent
-    ways depending on transaction type (UPI, NEFT, RTGS, IMPS, ATM).
-    This does best-effort extraction using regex patterns per type.
-    Falls back to a cleaned version of the full narration if no pattern matches.
+    ways depending on transaction type AND bank. This is genuinely
+    heuristic and bank-specific - expect to keep extending this as new
+    banks are tested. Two known formats handled so far:
+      - Bandhan Bank style: name after the LAST hyphen (NEFT/RTGS),
+        or 3rd hyphen-segment (IMPS)
+      - IDFC style: name is typically the segment before the IFSC
+        code (2nd-to-last "/" segment), except for internal bulk-payment
+        batches (BLKRTGS/BLKNEFT/BLKIFT) which have NO real counterparty
+        name in the narration at all - these must NOT be mistaken for
+        an account name (that was a real bug found in testing).
     """
     n = narration.upper().strip()
 
-    # UPI: "UPI/CR/C508616504762/KASTURI DU/OKIC/..."  -> name is 4th segment
+    if n.startswith(("BLKRTGS", "BLKNEFT", "BLKIFT")):
+        return "INTERNAL_BULK_PAYMENT_BATCH"
+
     if n.startswith("UPI"):
         parts = narration.split("/")
         if len(parts) >= 4:
-            return parts[3].strip()
+            candidate = parts[3].strip()
+            if candidate.upper() in ("UPI", "NA", ""):
+                return "UNKNOWN_UPI_COUNTERPARTY"
+            return candidate
 
-    # NEFT/RTGS DR or CR: "...-BANDHAN BANK-CANARA BANK" or "...-SAGAR"
-    # the counterparty name/bank is usually after the last hyphen
+    if n.startswith(("RTGS/", "NEFT/")):
+        parts = narration.split("/")
+        if len(parts) >= 3:
+            return parts[-2].strip()
+
     if n.startswith(("NEFT", "RTGS")):
         parts = narration.split("-")
         if len(parts) >= 2:
             return parts[-1].strip()
 
-    # IMPS: "IMPS-508611518864-DUBAI SHOPY-AIRP0000001-******84"
-    # counterparty name is the 3rd hyphen-separated segment
     if n.startswith("IMPS"):
+        if "/" in narration:
+            parts = narration.split("/")
+            if len(parts) >= 3:
+                return parts[2].strip()
         parts = narration.split("-")
         if len(parts) >= 3:
             return parts[2].strip()
 
-    # ATM withdrawal - not a transfer to another account, it's cash
     if "ATW" in n or "ATM" in n:
         return "CASH_WITHDRAWAL"
 
-    # fallback: use narration itself, truncated
     return narration.strip()[:40]
 
 
-def build_transaction_graph(transactions: list[Transaction], owner_account_id: str) -> nx.MultiDiGraph:
-    """
-    Builds a directed multigraph. Each transaction becomes one edge:
-      - if it's a debit: owner_account -> counterparty
-      - if it's a credit: counterparty -> owner_account
-    """
+def build_transaction_graph(transactions, owner_account_id):
     G = nx.MultiDiGraph()
     G.add_node(owner_account_id, label=owner_account_id)
-
     for t in transactions:
         counterparty = extract_counterparty(t.narration)
         if counterparty == "CASH_WITHDRAWAL":
-            continue  # cash leaving the banking system isn't part of a traceable loop
-
+            continue
         G.add_node(counterparty, label=counterparty)
-
         if t.debit > 0:
-            G.add_edge(owner_account_id, counterparty, amount=t.debit, date=t.date,
-                        narration=t.narration, ref_no=t.ref_no)
+            G.add_edge(owner_account_id, counterparty, amount=t.debit, date=t.date, narration=t.narration, ref_no=t.ref_no)
         if t.credit > 0:
-            G.add_edge(counterparty, owner_account_id, amount=t.credit, date=t.date,
-                        narration=t.narration, ref_no=t.ref_no)
-
+            G.add_edge(counterparty, owner_account_id, amount=t.credit, date=t.date, narration=t.narration, ref_no=t.ref_no)
     return G
 
 
-def detect_round_trips(G: nx.MultiDiGraph, max_window_days: int = 30) -> list[dict]:
-    """
-    Finds simple cycles in the graph (money that eventually returns to
-    where it started), constrained so all edges in a cycle happen within
-    max_window_days of each other - a cycle spanning years isn't the
-    same suspicious pattern as one spanning days.
-    """
+def detect_round_trips(G, max_window_days=30):
     round_trips = []
     for cycle in nx.simple_cycles(G):
         if len(cycle) < 2:
             continue
-        # gather all edges along this cycle
         cycle_edges = []
         valid = True
         for i in range(len(cycle)):
-            u, v = cycle[i], cycle[(i + 1) % len(cycle)]
+            u, v = cycle[i], cycle[(i+1) % len(cycle)]
             edge_data = G.get_edge_data(u, v)
             if not edge_data:
                 valid = False
                 break
-            # take the first matching edge (multigraph can have several)
             first_edge = list(edge_data.values())[0]
             cycle_edges.append({"from": u, "to": v, **first_edge})
         if not valid or not cycle_edges:
             continue
-
         dates = [e["date"] for e in cycle_edges]
         if (max(dates) - min(dates)).days > max_window_days:
             continue
-
-        round_trips.append({
-            "accounts_involved": cycle,
-            "edges": cycle_edges,
-            "span_days": (max(dates) - min(dates)).days,
-        })
-
+        round_trips.append({"accounts_involved": cycle, "edges": cycle_edges, "span_days": (max(dates)-min(dates)).days})
     return round_trips
 
 
-def find_accumulation_accounts(G: nx.MultiDiGraph, top_n: int = 5) -> list[dict]:
-    """
-    Finds accounts where money is net accumulating (received significantly
-    more than sent) - potential destination/mule accounts.
-    """
+def find_accumulation_accounts(G, top_n=5):
     net_flow = {}
     for node in G.nodes():
+        if node == "INTERNAL_BULK_PAYMENT_BATCH" or node == "UNKNOWN_UPI_COUNTERPARTY":
+            continue  # not real accounts - exclude from investigator-facing leads
         inflow = sum(d["amount"] for _, _, d in G.in_edges(node, data=True))
         outflow = sum(d["amount"] for _, _, d in G.out_edges(node, data=True))
         net_flow[node] = inflow - outflow
-
     ranked = sorted(net_flow.items(), key=lambda x: x[1], reverse=True)[:top_n]
     return [{"account": acc, "net_accumulated": amt} for acc, amt in ranked if amt > 0]

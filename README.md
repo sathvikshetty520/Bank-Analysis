@@ -7,7 +7,8 @@ relationships between accounts.
 ## Status: In Progress
 
 Working end-to-end pipeline (upload -> parse -> clean -> analyze -> view)
-tested against real bank statements from 3 different formats/banks.
+tested against real bank statements from 4 different formats/banks,
+including a real 555-page, 11,038-transaction statement.
 
 ## Architecture
 
@@ -20,7 +21,10 @@ graph analysis) ever touches raw files directly.
 Raw file (PDF / markdown-table / scanned image)
         |
         v
-   Parser plugin (format-specific: PdfParser, MarkdownTableParser, ...)
+   Parser plugin (format-specific: PdfParser, MarkdownTableParser,
+                  PdfTextLineParser, ...) - tried in order, falls
+                  through to the next parser if one returns zero
+                  transactions (not just on exceptions)
         |
         v
   Standard Transaction schema  <-- everything downstream uses ONLY this
@@ -48,9 +52,10 @@ bank-analysis/
         transaction.py       # standard Transaction / ParseResult schema
       parsers/
         base.py               # BaseParser interface + COLUMN_SYNONYMS matcher
-        pdf_parser.py          # text-based PDF statements (pdfplumber)
+        pdf_parser.py          # text-based PDF statements with bordered tables (pdfplumber)
+        pdf_text_line_parser.py # fallback: text-based PDFs with NO table borders (date-anchored regex)
         markdown_parser.py     # markdown/text pipe-table statements
-        registry.py            # dispatches uploaded file to the right parser
+        registry.py            # dispatches to first parser that returns >0 transactions
       services/
         cleaning.py            # duplicates, balance-chain check, reversed txns
         graph_analysis.py      # counterparty extraction, round-trip detection
@@ -113,11 +118,38 @@ multiple lines using `<br>` tags.
 transactions) - correctly handled multi-page tables, `<br>`-split
 headers, and narration text wrapped across cells.
 
+### 4a. PDF Text-Line Parser (fallback for borderless statements)
+`app/parsers/pdf_text_line_parser.py`
+
+Some bank PDFs have no visible table borders/lines at all, so
+`pdfplumber`'s `extract_tables()` finds nothing even though the data is
+present as clean, well-aligned text. This parser reads raw page text
+instead and uses a date-anchored regex (`LINE_PATTERN`) to detect where
+each transaction starts, treating any non-date-starting line as a
+continuation of the previous transaction's (often multi-line UPI)
+narration.
+
+Registered *after* `PdfParser` in the registry and only reached because
+the registry now treats a zero-transaction result as a "try the next
+parser" case, not just exceptions - this required a small registry
+logic change (see below).
+
+**Tested on:** a real 555-page, 11,038-transaction YES Bank statement
+with no table borders at all - `PdfParser` correctly found 0
+transactions on every page (proving the fallback logic works), and
+`PdfTextLineParser` then extracted all 11,038 correctly, with **0
+balance-chain mismatches across the entire statement** - strong
+validation that date/amount extraction held up at real scale, not
+just on small test files.
+
 ### 5. Parser Registry
 `app/parsers/registry.py`
 
-Dispatches an uploaded file to the first parser that accepts it.
-Currently registers `PdfParser` and `MarkdownTableParser`.
+Dispatches an uploaded file to the first parser that returns at least
+one transaction (not just the first parser that doesn't raise an
+exception) - this "try next on empty result" behavior is what lets
+`PdfTextLineParser` act as a genuine fallback for `PdfParser`, since
+both accept any `.pdf` file at the `can_parse()` check.
 
 ### 6. Data Cleaning & Validation
 `app/services/cleaning.py`
@@ -135,11 +167,26 @@ Currently registers `PdfParser` and `MarkdownTableParser`.
   - `reversal_confidence = "possible"` - same amount debited then
     credited within a time window, no explicit keyword - a coincidence-
     level signal only, needs manual review.
+  - **Volume-based tightening:** on statements over 500 transactions,
+    "possible" matches additionally require the counterparty (via
+    `extract_counterparty()`) to match, not just the amount. Pure
+    amount-matching alone doesn't scale - confirmed on the real
+    11,038-transaction statement, where it initially flagged 2,594
+    transactions (23.5%) as "possible", almost entirely coincidental
+    small UPI amounts recurring by chance. Adding the counterparty
+    check is expected to cut this dramatically while still catching
+    genuine reversal pairs (verified against a synthetic 650-transaction
+    test case with known genuine vs. coincidental pairs).
 
 **Tested on real data (205 transactions):** 0 balance mismatches,
 11 duplicates, 45 reversed-flagged - of which only 3 were keyword-
 confirmed and 42 were amount-coincidence only, confirming the two-tier
 split was necessary.
+
+**Tested on real data (11,038 transactions):** 0 balance mismatches,
+0 duplicates, 3 keyword-confirmed reversals - the "possible" tier
+required the counterparty-matching fix above to stay useful at this
+scale.
 
 ### 7. Money Flow Graph & Round-Trip Detection
 `app/services/graph_analysis.py`
@@ -229,15 +276,28 @@ against the running backend at `http://127.0.0.1:8000`.
 - Counterparty name extraction from narrations is regex-based per
   transaction type/bank and will need extending for formats not yet
   seen - this is the clearest case for eventually adding an LLM-based
-  fallback rather than hand-writing more patterns.
+  fallback rather than hand-writing more patterns. It's also now a
+  dependency of reversal detection on large statements, so extraction
+  quality there affects cleaning accuracy too.
 - Round-trip detection needs statements from multiple related accounts
   uploaded into the same investigation session to be meaningful.
 - "Possible" reversed-transaction flags are amount-coincidence matches
-  only and are not confirmed fraud/failure - always review before
-  treating as fact.
+  only (or amount+counterparty on large statements) and are not
+  confirmed fraud/failure - always review before treating as fact.
 - Some PDF-to-text conversions destroy row/table structure entirely
   (confirmed with a real statement) - these will need coordinate-based
-  extraction or an LLM fallback, not more rule-based parsing.
+  extraction or an LLM fallback, not more rule-based parsing. This is
+  different from the "no table borders but text is well-formatted"
+  case, which `PdfTextLineParser` now handles.
+- Session data is stored in memory (`SESSION_STORE` dict in `main.py`)
+  - any server restart (including `uvicorn --reload` triggered by
+    saving a file mid-session) wipes all uploaded data. Confirmed as a
+    real issue during testing - fine for local dev, would need a real
+    database before this could be a deployed tool.
+- `PdfTextLineParser`'s date-anchored regex (`LINE_PATTERN`) is tuned to
+  one date format (`DD-MON-YYYY`) seen so far - other date formats in
+  borderless PDFs will need the pattern extended, similar to how
+  `COLUMN_SYNONYMS` gets extended for table-based formats.
 
 ## Security note
 

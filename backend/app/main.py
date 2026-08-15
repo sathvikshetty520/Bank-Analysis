@@ -65,6 +65,8 @@ async def upload_statement(file: UploadFile = File(...), account_id: str = Form(
         "duplicates_found": sum(1 for t in cleaned if t.is_duplicate),
         "balance_mismatches": sum(1 for t in cleaned if t.balance_mismatch),
         "reversed_transactions_flagged": sum(1 for t in cleaned if t.is_reversed_transaction),
+        "reversed_confirmed": sum(1 for t in cleaned if t.reversal_confidence == "confirmed"),
+        "reversed_possible": sum(1 for t in cleaned if t.reversal_confidence == "possible"),
         "warnings": result.warnings,
         "transactions": [t.model_dump(mode="json") for t in cleaned],
     }

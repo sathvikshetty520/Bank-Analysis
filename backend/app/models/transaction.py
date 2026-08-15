@@ -26,6 +26,7 @@ class Transaction(BaseModel):
 
     is_duplicate: bool = False
     is_reversed_transaction: bool = False
+    reversal_confidence: Optional[str] = None  # "confirmed" (narration keyword) or "possible" (amount match only)
     balance_mismatch: bool = False
 
 

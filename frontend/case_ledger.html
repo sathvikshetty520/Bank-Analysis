@@ -150,7 +150,8 @@
         <div class="statRow"><span class="statLabel">Transactions</span><span class="statVal" id="statCount">—</span></div>
         <div class="statRow"><span class="statLabel">Duplicates</span><span class="statVal clean" id="statDup">—</span></div>
         <div class="statRow"><span class="statLabel">Balance breaks</span><span class="statVal clean" id="statMismatch">—</span></div>
-        <div class="statRow"><span class="statLabel">Reversed flagged</span><span class="statVal flagged" id="statRev">—</span></div>
+        <div class="statRow"><span class="statLabel">Reversed — confirmed</span><span class="statVal flagged" id="statRevConfirmed">—</span></div>
+<div class="statRow"><span class="statLabel">Reversed — possible</span><span class="statVal" id="statRevPossible" style="color:var(--amber);">—</span></div>
       </div>
       <div class="stampPanel" style="margin-top:16px;">
         <div class="stampLabel">Legend</div>
@@ -208,7 +209,8 @@ function renderSummary(d){
   document.getElementById('statCount').textContent = d.summary.transaction_count;
   document.getElementById('statDup').textContent = d.summary.duplicates;
   document.getElementById('statMismatch').textContent = d.summary.balance_mismatches;
-  document.getElementById('statRev').textContent = d.summary.reversed;
+  document.getElementById('statRevConfirmed').textContent = d.summary.reversed_confirmed ?? 0;
+  document.getElementById('statRevPossible').textContent = d.summary.reversed_possible ?? 0;
   const dupEl = document.getElementById('statDup');
   const misEl = document.getElementById('statMismatch');
   dupEl.className = 'statVal ' + (d.summary.duplicates > 0 ? 'flagged' : 'clean');
@@ -311,8 +313,10 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
     if(!res.ok) throw new Error('Upload failed: ' + res.status);
     const result = await res.json();
     const graphRes = await fetch(`http://127.0.0.1:8000/analysis/graph/${result.session_id}?account_id=uploaded_account`);
+    if(!graphRes.ok) throw new Error('Graph analysis failed: ' + graphRes.status + ' (session may have expired - try re-uploading)');
     const graphData = await graphRes.json();
     const trailRes = await fetch(`http://127.0.0.1:8000/analysis/money-trail/${result.session_id}`);
+    if(!trailRes.ok) throw new Error('Money trail failed: ' + trailRes.status + ' (session may have expired - try re-uploading)');
     const trailData = await trailRes.json();
  
     const combined = {
@@ -322,6 +326,8 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         duplicates: result.duplicates_found,
         balance_mismatches: result.balance_mismatches,
         reversed: result.reversed_transactions_flagged,
+        reversed_confirmed: result.reversed_confirmed,
+        reversed_possible: result.reversed_possible,
       },
       accumulation_accounts: graphData.accumulation_accounts,
       trails: trailData.trails,

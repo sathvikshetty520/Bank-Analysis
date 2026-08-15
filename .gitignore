@@ -1,0 +1,45 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Uploaded / user data (sensitive - never commit real bank statements) ---
+backend/uploaded_files/
+backend/sample_data/*.pdf
+backend/sample_data/*.md
+backend/sample_data/*.csv
+backend/sample_data/*.xlsx
+*.pdf
+*.md
+!README.md
+*.xlsx
+*.xls
+
+# --- Environment / secrets ---
+.env
+.env.local
+*.key
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# --- Logs ---
+*.log
+
+# --- Generated outputs ---
+backend/outputs/
+*.zip

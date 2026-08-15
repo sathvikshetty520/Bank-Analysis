@@ -15,7 +15,7 @@ COLUMN_SYNONYMS = {
     "narration": ["narration", "description", "particulars", "details", "remarks", "transaction remarks",
                   "transaction details"],
     "ref_no": ["ref no", "reference no", "ref number", "cheque no", "chq no", "transaction id", "utr", "utr no",
-               "cheque / instrument", "cheque/instrument", "instrument"],
+               "cheque / instrument", "cheque/instrument", "instrument", "ref txn no"],
     "debit": ["debit", "withdrawal", "withdrawal amt", "withdrawal amount", "dr", "debit amount", "debits"],
     "credit": ["credit", "deposit", "deposit amt", "deposit amount", "cr", "credit amount", "credits"],
     "balance": ["balance", "closing balance", "available balance", "balance amount", "running balance"],

@@ -123,8 +123,26 @@ class CsvExcelParser(BaseParser):
 
             narration = str(row.get(col_map.get("narration", ""), "")).strip()
             ref_no = str(row.get(col_map.get("ref_no", ""), "")).strip() or None
-            debit = self._parse_amount(row.get(col_map.get("debit", ""), 0))
-            credit = self._parse_amount(row.get(col_map.get("credit", ""), 0))
+            raw_debit = self._parse_amount(row.get(col_map.get("debit", ""), 0))
+            raw_credit = self._parse_amount(row.get(col_map.get("credit", ""), 0))
+
+            # Some banks represent a reversal as a NEGATIVE debit (rather than
+            # a credit entry) - e.g. a "UPI/REV/..." row with debit=-1.00.
+            # Blindly taking abs() of this turns a reversal into what looks
+            # like another charge, breaking the balance-chain math (found on
+            # a real SBI statement: this exact pattern caused every reversed
+            # transaction to show a balance mismatch of 2x the reversal
+            # amount). Convert a negative debit/credit into the opposite
+            # column instead of discarding its sign.
+            debit = raw_debit
+            credit = raw_credit
+            if debit < 0:
+                credit += abs(debit)
+                debit = 0.0
+            elif credit < 0:
+                debit += abs(credit)
+                credit = 0.0
+
             balance_raw = row.get(col_map.get("balance", ""), None)
             balance = self._parse_amount(balance_raw) if balance_raw is not None else None
 

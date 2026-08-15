@@ -1,7 +1,6 @@
-
 from abc import ABC, abstractmethod
 from app.models.transaction import ParseResult
- 
+
 class BaseParser(ABC):
     name: str = "base"
     @abstractmethod
@@ -10,9 +9,9 @@ class BaseParser(ABC):
     @abstractmethod
     def extract(self, file_path: str, account_id: str) -> ParseResult:
         raise NotImplementedError
- 
+
 COLUMN_SYNONYMS = {
-    "date": ["date", "txn date", "trans date", "transaction date", "value date", "posting date"],
+    "date": ["date", "txn date", "txn dt", "trans date", "transaction date", "value date", "posting date"],
     "narration": ["narration", "description", "particulars", "details", "remarks", "transaction remarks",
                   "transaction details"],
     "ref_no": ["ref no", "reference no", "ref number", "cheque no", "chq no", "transaction id", "utr", "utr no",
@@ -21,13 +20,13 @@ COLUMN_SYNONYMS = {
     "credit": ["credit", "deposit", "deposit amt", "deposit amount", "cr", "credit amount", "credits"],
     "balance": ["balance", "closing balance", "available balance", "balance amount", "running balance"],
 }
- 
+
 def normalize_header(header: str) -> str:
     # Real PDF tables often break headers across lines, e.g. "TRANS\nDATE".
     # Collapse any whitespace (newlines, tabs, multiple spaces) into single spaces.
     header = " ".join(header.split())
     return header.strip().lower().replace(".", "").replace("_", " ")
- 
+
 def map_columns(headers: list[str]) -> dict[str, str]:
     normalized = {h: normalize_header(h) for h in headers}
     result = {}

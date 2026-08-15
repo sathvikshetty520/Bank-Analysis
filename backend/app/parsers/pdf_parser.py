@@ -12,6 +12,7 @@ this parser will produce zero transactions and a warning - that's the
 signal to fall back to the OCR parser (built later).
 """
 import pdfplumber
+import re
 from datetime import datetime
 import pandas as pd
  
@@ -31,6 +32,7 @@ class PdfParser(BaseParser):
         if val is None:
             return 0.0
         s = str(val).strip().replace(",", "")
+        s = re.sub(r"(Cr|Dr|CR|DR)$", "", s).strip() 
         if s == "" or s.lower() == "nan":
             return 0.0
         negative = s.startswith("(") and s.endswith(")")

@@ -279,6 +279,23 @@ against the running backend at `http://127.0.0.1:8000`.
   fallback rather than hand-writing more patterns. It's also now a
   dependency of reversal detection on large statements, so extraction
   quality there affects cleaning accuracy too.
+- **Common-name false matches in counterparty comparison** (found via
+  real data): `extract_counterparty()` for UPI narrations returns only
+  the bare first name (e.g. "MUHAMMED"), not the UPI handle. Two
+  different real people sharing a common name (very common with names
+  like "Muhammed"/"Mohammed" in this dataset) can be incorrectly
+  treated as the "same counterparty" for possible-reversal matching,
+  even though their UPI handles and bank codes clearly differ (e.g.
+  `**shrey@okhdfcbank` vs `**321-2@okhdfcbank`). A stricter fix (also
+  requiring the UPI handle to match) was considered and deliberately
+  NOT implemented, because it risks the opposite failure: missing
+  genuine reversals where the same person legitimately uses two
+  different UPI apps/handles (plausibly seen in the same dataset with
+  a different counterparty pair, "AMANU RAH", using `**09017@ybl` on
+  one side and `**prade@okhdfcbank` on the other). This is a real,
+  unresolved precision/recall tradeoff - "possible" reversal flags on
+  large statements should be manually reviewed with this in mind,
+  especially for common names.
 - Round-trip detection needs statements from multiple related accounts
   uploaded into the same investigation session to be meaningful.
 - "Possible" reversed-transaction flags are amount-coincidence matches

@@ -176,6 +176,18 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
     heading_style = styles["Heading2"]
     body_style = styles["Normal"]
     note_style = ParagraphStyle("Note", parent=styles["Normal"], fontSize=8, textColor=colors.grey)
+    # Small style for table cell content - wrapping plain strings in Paragraph
+    # objects like this is required for ReportLab to wrap long text within a
+    # column width; plain strings in Table cells do NOT wrap and instead
+    # overflow/overlap into neighboring cells (the bug this fixes).
+    cell_style = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=8, leading=10)
+    cell_style_white = ParagraphStyle("CellWhite", parent=cell_style, textColor=colors.white, fontName="Helvetica-Bold")
+
+    def cell(text):
+        return Paragraph(str(text), cell_style)
+
+    def header_cell(text):
+        return Paragraph(str(text), cell_style_white)
 
     story = []
 
@@ -190,14 +202,14 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
     possible_rev = sum(1 for t in transactions if t.reversal_confidence == "possible")
 
     summary_data = [
-        ["Accounts in investigation", ", ".join(accounts)],
-        ["Total transactions analyzed", str(len(transactions))],
-        ["Duplicates flagged", str(dup_count)],
-        ["Balance-chain mismatches", str(mismatch_count)],
-        ["Reversed - confirmed (bank-stated)", str(confirmed_rev)],
-        ["Reversed - possible (amount match)", str(possible_rev)],
-        ["Round-trip patterns detected", str(len(round_trips))],
-        ["Accumulation leads identified", str(len(accumulation_accounts))],
+        [cell("Accounts in investigation"), cell(", ".join(accounts))],
+        [cell("Total transactions analyzed"), cell(str(len(transactions)))],
+        [cell("Duplicates flagged"), cell(str(dup_count))],
+        [cell("Balance-chain mismatches"), cell(str(mismatch_count))],
+        [cell("Reversed - confirmed (bank-stated)"), cell(str(confirmed_rev))],
+        [cell("Reversed - possible (amount match)"), cell(str(possible_rev))],
+        [cell("Round-trip patterns detected"), cell(str(len(round_trips)))],
+        [cell("Accumulation leads identified"), cell(str(len(accumulation_accounts)))],
     ]
     t = Table(summary_data, colWidths=[3 * inch, 3.5 * inch])
     t.setStyle(TableStyle([
@@ -226,10 +238,12 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
         for i, rt in enumerate(round_trips, start=1):
             chain = " \u2192 ".join(rt["accounts_involved"] + [rt["accounts_involved"][0]])
             story.append(Paragraph(f"<b>Round Trip {i}:</b> {chain} &nbsp; ({rt['span_days']} day span)", body_style))
-            rt_data = [["From", "To", "Date", "Amount", "Confirmed Link"]]
+            rt_data = [[header_cell("From"), header_cell("To"), header_cell("Date"),
+                        header_cell("Amount"), header_cell("Confirmed Link")]]
             for e in rt["edges"]:
-                rt_data.append([e["from"], e["to"], str(e["date"]), f"{e['amount']:,.2f}",
-                                 "Yes" if e.get("confirmed_link") else "No"])
+                rt_data.append([cell(e["from"]), cell(e["to"]), cell(str(e["date"])),
+                                 cell(f"{e['amount']:,.2f}"),
+                                 cell("Yes" if e.get("confirmed_link") else "No")])
             rt_table = Table(rt_data, colWidths=[1.3*inch, 1.3*inch, 1*inch, 1.2*inch, 1.2*inch])
             rt_table.setStyle(TableStyle([
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -251,9 +265,9 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
     # --- Accumulation Leads ---
     story.append(Paragraph("Top Accumulation Leads", heading_style))
     if accumulation_accounts:
-        lead_data = [["Account / Counterparty", "Net Accumulated"]]
+        lead_data = [[header_cell("Account / Counterparty"), header_cell("Net Accumulated")]]
         for a in accumulation_accounts:
-            lead_data.append([a["account"], f"Rs. {a['net_accumulated']:,.2f}"])
+            lead_data.append([cell(a["account"]), cell(f"Rs. {a['net_accumulated']:,.2f}")])
         lead_table = Table(lead_data, colWidths=[3.5 * inch, 2.5 * inch])
         lead_table.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -277,7 +291,7 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
     ))
     story.append(Spacer(1, 6))
     if flagged:
-        flag_data = [["Date", "Narration", "Amount", "Flags"]]
+        flag_data = [[header_cell("Date"), header_cell("Narration"), header_cell("Amount"), header_cell("Flags")]]
         for t in flagged[:max_flagged_rows]:
             flags = []
             if t.is_duplicate:
@@ -287,7 +301,8 @@ def generate_pdf_report(transactions, round_trips, accumulation_accounts, trails
             if t.balance_mismatch:
                 flags.append("Balance break")
             amt = t.debit if t.debit else t.credit
-            flag_data.append([str(t.date), (t.narration or "")[:55], f"{amt:,.2f}", ", ".join(flags)])
+            flag_data.append([cell(str(t.date)), cell((t.narration or "")[:80]),
+                               cell(f"{amt:,.2f}"), cell(", ".join(flags))])
         flag_table = Table(flag_data, colWidths=[0.8*inch, 3*inch, 1*inch, 1.7*inch])
         flag_table.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),

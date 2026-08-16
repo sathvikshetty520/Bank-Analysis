@@ -141,6 +141,10 @@
       <input type="file" id="fileInput" accept=".pdf,.md,.txt,.csv,.xlsx">
       <button class="uploadBtn" onclick="document.getElementById('fileInput').click()">+ Add Statement to Case</button>
       <div id="accountsInSession" style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--muted); margin-top:8px; text-align:right;"></div>
+      <div style="margin-top:10px; text-align:right;">
+        <button class="uploadBtn" id="downloadExcelBtn" style="font-size:10px; padding:7px 12px; background:var(--paper); color:var(--ink); margin-right:6px;" disabled>Download Excel</button>
+        <button class="uploadBtn" id="downloadPdfBtn" style="font-size:10px; padding:7px 12px; background:var(--paper); color:var(--ink);" disabled>Download PDF Report</button>
+      </div>
     </div>
   </div>
 
@@ -401,6 +405,9 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
     document.getElementById('accountsInSession').textContent =
       'Accounts in case: ' + graphData.accounts_in_session.join(', ');
 
+    document.getElementById('downloadExcelBtn').disabled = false;
+    document.getElementById('downloadPdfBtn').disabled = false;
+
     if(graphData.round_trips.length > 0){
       alert(`${graphData.round_trips.length} round-trip pattern(s) detected across the accounts in this case. Check the Flow Leads tab.`);
     }
@@ -409,6 +416,16 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
   }catch(err){
     document.getElementById('caseSub').textContent = 'ERROR: Could not reach backend at 127.0.0.1:8000 — is uvicorn running? (' + err.message + ')';
   }
+});
+
+document.getElementById('downloadExcelBtn').addEventListener('click', () => {
+  if(!CURRENT_SESSION_ID){ alert('Upload a statement first.'); return; }
+  window.open(`http://127.0.0.1:8000/report/excel/${CURRENT_SESSION_ID}`, '_blank');
+});
+
+document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+  if(!CURRENT_SESSION_ID){ alert('Upload a statement first.'); return; }
+  window.open(`http://127.0.0.1:8000/report/pdf/${CURRENT_SESSION_ID}`, '_blank');
 });
 
 renderAll(DATA);

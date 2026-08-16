@@ -15,7 +15,6 @@ to X" - not what X did with it afterward. This module works with
 whatever accounts are available and gets more powerful as more
 statements are added to the same investigation.
 """
-
 import networkx as nx
 from app.models.transaction import Transaction
 
@@ -115,9 +114,60 @@ def find_accumulation_accounts(G, top_n=5):
     net_flow = {}
     for node in G.nodes():
         if node == "INTERNAL_BULK_PAYMENT_BATCH" or node == "UNKNOWN_UPI_COUNTERPARTY":
-            continue  # not real accounts - exclude from investigator-facing leads
+            continue
         inflow = sum(d["amount"] for _, _, d in G.in_edges(node, data=True))
         outflow = sum(d["amount"] for _, _, d in G.out_edges(node, data=True))
         net_flow[node] = inflow - outflow
     ranked = sorted(net_flow.items(), key=lambda x: x[1], reverse=True)[:top_n]
     return [{"account": acc, "net_accumulated": amt} for acc, amt in ranked if amt > 0]
+
+
+def build_multi_account_graph(transactions_by_account: dict) -> nx.MultiDiGraph:
+    """
+    Builds a graph spanning MULTIPLE uploaded accounts, so round-trip
+    detection can find genuine multi-hop cycles (A -> B -> C -> A) that
+    are structurally invisible from any single account's statement alone.
+
+    transactions_by_account: {account_id: [Transaction, ...]}
+
+    Key difference from build_transaction_graph(): when a transaction's
+    narration contains another uploaded account's real account number
+    (banks commonly embed this, e.g. "TO:098030016134598@YESB..."),
+    that edge is linked to the REAL account node instead of a
+    narration-guessed counterparty name. This is what makes cross-
+    statement round-trip detection trustworthy rather than a guess -
+    it's based on a matched real account number, not just a similar name.
+    """
+    G = nx.MultiDiGraph()
+    known_account_ids = list(transactions_by_account.keys())
+
+    for account_id in known_account_ids:
+        G.add_node(account_id, label=account_id, is_uploaded_account=True)
+
+    for account_id, transactions in transactions_by_account.items():
+        for t in transactions:
+            matched_account = None
+            for other_id in known_account_ids:
+                if other_id != account_id and len(other_id) >= 6 and other_id in t.narration:
+                    matched_account = other_id
+                    break
+
+            if matched_account:
+                counterparty = matched_account
+            else:
+                counterparty = extract_counterparty(t.narration)
+                if counterparty == "CASH_WITHDRAWAL":
+                    continue
+                if not G.has_node(counterparty):
+                    G.add_node(counterparty, label=counterparty, is_uploaded_account=False)
+
+            if t.debit > 0:
+                G.add_edge(account_id, counterparty, amount=t.debit, date=t.date,
+                            narration=t.narration, ref_no=t.ref_no,
+                            confirmed_link=bool(matched_account))
+            if t.credit > 0:
+                G.add_edge(counterparty, account_id, amount=t.credit, date=t.date,
+                            narration=t.narration, ref_no=t.ref_no,
+                            confirmed_link=bool(matched_account))
+
+    return G

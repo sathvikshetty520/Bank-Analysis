@@ -6,9 +6,10 @@ relationships between accounts.
 
 ## Status: In Progress
 
-Working end-to-end pipeline (upload -> parse -> clean -> analyze -> view)
+Working end-to-end pipeline (upload -> parse -> clean -> analyze -> report)
 tested against real bank statements from 4 different formats/banks,
-including a real 555-page, 11,038-transaction statement.
+including a real 555-page, 11,038-transaction statement, and a real
+genuine cross-account round-trip detected across two uploaded statements.
 
 ## Architecture
 
@@ -22,24 +23,32 @@ Raw file (PDF / markdown-table / scanned image)
         |
         v
    Parser plugin (format-specific: PdfParser, MarkdownTableParser,
-                  PdfTextLineParser, ...) - tried in order, falls
-                  through to the next parser if one returns zero
+                  PdfTextLineParser, CsvExcelParser) - tried in order,
+                  falls through to the next parser if one returns zero
                   transactions (not just on exceptions)
         |
         v
   Standard Transaction schema  <-- everything downstream uses ONLY this
         |
         v
-  Cleaning & validation (duplicates, balance checks, reversed txns)
+  Cleaning & validation (duplicates, balance checks, two-tier reversed txns)
         |
         v
-  Graph analysis (counterparty extraction, money flow, round-trip / cycle detection)
+  Multi-account session (SESSION_STORE: {session_id: {account_id: [txns]}})
+  - multiple statements can be uploaded into ONE investigation
+        |
+        v
+  Graph analysis (counterparty extraction, cross-account linking via
+  real account numbers found in narrations, round-trip / cycle detection)
         |
         v
   Money Trail (FIFO tracing: "this credit -> these debits")
         |
         v
   FastAPI endpoints  -->  Case Ledger frontend (upload + 3 views)
+        |
+        v
+  Report export (Excel workbook + PDF summary report)
 ```
 
 ## Project structure
@@ -55,11 +64,13 @@ bank-analysis/
         pdf_parser.py          # text-based PDF statements with bordered tables (pdfplumber)
         pdf_text_line_parser.py # fallback: text-based PDFs with NO table borders (date-anchored regex)
         markdown_parser.py     # markdown/text pipe-table statements
+        csv_excel_parser.py    # CSV/Excel exports, tolerant of ragged junk rows
         registry.py            # dispatches to first parser that returns >0 transactions
       services/
-        cleaning.py            # duplicates, balance-chain check, reversed txns
-        graph_analysis.py      # counterparty extraction, round-trip detection
+        cleaning.py            # duplicates, balance-chain check, two-tier reversed txns
+        graph_analysis.py      # counterparty extraction, single + multi-account round-trip detection
         money_trail.py         # FIFO credit-to-debit tracing
+        report.py              # Excel workbook + PDF summary report generation
       main.py                  # FastAPI app: /upload, /transactions, /analysis/*
     requirements.txt
   frontend/
@@ -142,7 +153,32 @@ balance-chain mismatches across the entire statement** - strong
 validation that date/amount extraction held up at real scale, not
 just on small test files.
 
-### 5. Parser Registry
+### 4b. CSV / Excel Parser
+`app/parsers/csv_excel_parser.py`
+
+Handles .csv/.xls/.xlsx exports. Reads CSV rows manually via Python's
+`csv` module rather than pandas' C parser, since real bank exports
+often have "ragged" junk rows at the top (inconsistent column counts
+per line) that crash pandas' fast parser outright - found via a real
+SBI CASA statement export. Header detection picks the best-matching
+row (not first-match), same lesson as the markdown parser. Strips
+trailing Cr/Dr balance suffixes, and converts a negative debit into
+the equivalent credit rather than discarding its sign via `abs()` -
+some banks (confirmed on the same SBI statement) represent a reversal
+as a negative debit rather than a separate credit entry; blindly
+abs()-ing this destroyed the reversal signal and broke balance-chain
+validation by exactly 2x the reversed amount.
+
+**Tested on:** a real SBI CASA statement (555 transactions spanning
+2019-2025). Found and fixed two real bugs via this file: missing
+"txn dt" date-column synonym, and the negative-debit-as-reversal issue
+above. After fixes: 0 duplicates, 0 balance mismatches on the full
+statement (down from 61 and 8 respectively before the fixes) - both
+confirmed as false positives caused by the two bugs, not real data
+issues, by re-testing against the exact real reconstructed row
+sequences from the source file.
+
+
 `app/parsers/registry.py`
 
 Dispatches an uploaded file to the first parser that returns at least
@@ -197,21 +233,42 @@ scale.
   hyphen-style, IDFC slash-style), explicitly excludes internal
   bulk-payment batch references (`BLKRTGS`/`BLKNEFT`/`BLKIFT`) and
   generic UPI app names from being mistaken for real counterparties
-  (a real bug found and fixed during testing).
-- `build_transaction_graph()`: builds a directed graph (NetworkX) -
-  nodes are accounts/entities, edges are transactions.
+  (a real bug found and fixed during testing). Known remaining
+  limitation: common first names (e.g. "Muhammed") can cause two
+  different real people to be treated as the same counterparty -
+  found via manual review, deliberately not "fixed" further since a
+  stricter match risks missing genuine same-person transfers across
+  different UPI apps/handles (see Known Limitations below).
+- `build_transaction_graph()`: builds a directed graph (NetworkX) for
+  a SINGLE account - nodes are that account plus narration-derived
+  counterparties, edges are transactions.
+- `build_multi_account_graph()`: builds a graph spanning MULTIPLE
+  uploaded accounts (one investigation session can now hold several
+  statements). Critically, when a transaction's narration contains
+  another uploaded account's real account number, that edge links to
+  the REAL account node instead of a narration-guessed name - this
+  turns round-trip detection from a guess into something based on a
+  confirmed match. Each edge carries a `confirmed_link` flag so the
+  report/UI can distinguish verified links from inferred ones.
 - `detect_round_trips()`: finds cycles in the graph within a
-  configurable time window - the core round-trip fraud pattern.
+  configurable time window - the core round-trip fraud pattern. Now
+  genuinely capable of finding multi-hop cycles (A -> B -> C -> A)
+  that are structurally invisible from any single statement.
 - `find_accumulation_accounts()`: ranks counterparties by net amount
   received - surfaces potential destination/mule accounts.
 
-**Known limitation:** round-trip detection requires statements from
-multiple linked accounts in the same investigation session to be
-meaningful; a single account's statement can only show money leaving/
-arriving, not whether it later returns through another account.
+**Tested and confirmed working on real data:** uploaded two related
+real bank statements into one investigation session (via the new
+multi-file session support in `main.py`) and the system detected 2
+genuine round-trip patterns between the real accounts - not a
+synthetic test, an actual finding on real data. Also verified with a
+synthetic 3-hop A->B->C->A cycle across 3 separate simulated uploads
+to confirm the cross-statement linking logic works end-to-end via the
+real API (not just the isolated function).
 
 ### 8. Money Trail Analysis (FIFO Tracing)
 `app/services/money_trail.py`
+
 
 Given a specific credit, walks forward through subsequent debits,
 FIFO-consuming the credited amount until exhausted, to answer
@@ -225,13 +282,26 @@ fully traced on a 205-transaction statement.
 ### 9. FastAPI Backend
 `app/main.py`
 
-- `POST /upload` - extract, clean, store; returns transactions +
-  duplicate/mismatch/reversed counts + warnings.
-- `GET /transactions/{session_id}` - fetch stored transactions.
-- `GET /analysis/graph/{session_id}` - round-trips + accumulation leads.
-- `GET /analysis/money-trail/{session_id}` - FIFO trace of every credit.
+- `POST /upload` - extract, clean, store. Accepts an optional
+  `session_id` - if provided and it exists, this file's transactions
+  are ADDED to that session under its own `account_id`, enabling
+  multi-account investigations, rather than starting a new session
+  each time.
+- `GET /transactions/{session_id}` - fetch all transactions across
+  every account in the session.
+- `GET /analysis/graph/{session_id}` - round-trips (now genuinely
+  cross-account) + accumulation leads, computed via
+  `build_multi_account_graph()` over every account in the session.
+- `GET /analysis/money-trail/{session_id}` - FIFO trace of every
+  credit across all accounts in the session.
+- `GET /report/excel/{session_id}` - downloads a full Excel workbook.
+- `GET /report/pdf/{session_id}` - downloads a summary PDF report.
 
-Session data currently stored in memory (swap for a real DB later).
+`SESSION_STORE` is now `{session_id: {account_id: [transactions]}}`
+(previously a flat list per session) to support multiple accounts per
+investigation. Still in-memory (swap for a real DB later) - confirmed
+during testing that any server restart (including `--reload` picking
+up a saved file mid-session) wipes all uploaded data.
 
 ### 10. Case Ledger Frontend
 `frontend/case_ledger.html`
@@ -239,25 +309,57 @@ Session data currently stored in memory (swap for a real DB later).
 Single-file HTML/CSS/JS UI styled as an evidence ledger. Three tabs:
 - **Ledger** - all transactions with ink-stamp flags (Duplicate,
   Reversed confirmed/possible, Balance break).
-- **Flow Leads** - accumulation-account ranking from graph analysis.
+- **Flow Leads** - round-trip patterns (account chain, per-hop amounts,
+  confirmed-link status) displayed persistently as cards, plus the
+  accumulation-account ranking from graph analysis.
 - **Money Trail** - every credit expanded to show its FIFO-traced debits.
+
+"+ Add Statement to Case" supports uploading multiple statements into
+one investigation: each upload prompts for that statement's real
+account ID, and subsequent uploads are appended to the same session
+(tracked client-side via `CURRENT_SESSION_ID`) rather than replacing
+it. "Download Excel" / "Download PDF Report" buttons enable once a
+session exists and open the corresponding report endpoint.
 
 "+ Upload Statement" calls the FastAPI backend directly
 (`http://127.0.0.1:8000`) - works fully offline/locally, no separate
 frontend server needed.
 
+### 11. Report Generation (Excel + PDF)
+`app/services/report.py`
+
+Requirement 6 - the investigation deliverable.
+
+- `generate_excel_report()`: 5-sheet workbook (Summary, full
+  Transaction Ledger with flag columns, Round Trips, Accumulation
+  Leads, Money Trail). Debit/credit totals use real `=SUM()` formulas,
+  not hardcoded Python totals - verified with the mandatory recalc
+  check (0 formula errors) and cross-checked against Python's
+  independently-computed sums (exact match: Rs. 15,083,920 both ways
+  on the real 205-transaction test file).
+- `generate_pdf_report()`: 4-page human-readable summary (not the full
+  ledger - that's what Excel is for): key stats, round-trip chains
+  with confirmed-link status, top accumulation leads, and a capped
+  table of flagged transactions. Table cells are wrapped in ReportLab
+  `Paragraph` objects rather than plain strings - plain strings don't
+  wrap and overflow into neighboring cells (a real rendering bug found
+  and fixed by rendering the PDF to an image and visually inspecting
+  it, not just trusting the code ran without errors).
+
+**Tested on real data:** generated and verified both reports against
+the real 205-transaction IDFC statement, and against a synthetic
+3-account round-trip case to confirm the round-trip table renders
+correctly with real cross-account data.
+
 ## Not yet built
 
-- CSV/Excel parser (Requirement 1 - still missing)
 - OCR + LLM fallback parser (for scanned statements and PDFs where table
   structure is destroyed on extraction - confirmed necessary after
   testing one real statement that failed this way)
 - LLM-based narration/counterparty extraction (would generalize better
   than hand-written regex per bank - regex approach is showing real
-  scaling limits after 3 bank formats)
-- PDF/Excel report generation & export (Requirement 6)
-- Multi-file / multi-account investigation sessions (needed for real
-  round-trip detection across linked accounts)
+  scaling limits after 4+ bank formats, and is now the deliberately
+  unresolved cause of the common-name false-match limitation below)
 
 ## Setup
 

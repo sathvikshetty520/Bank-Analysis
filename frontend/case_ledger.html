@@ -170,16 +170,17 @@
 
     <div>
       <div class="tabs">
-        <button class="tab active" data-tab="ledger">Ledger</button>
-        <button class="tab" data-tab="leads">Flow Leads</button>
-        <button class="tab" data-tab="trail">Money Trail</button>
-      </div>
+  <button class="tab active" data-tab="ledger">Ledger</button>
+  <button class="tab" data-tab="leads">Flow Leads</button>
+  <button class="tab" data-tab="trail">Money Trail</button>
+  <button class="tab" data-tab="categories">Categories</button>
+</div>
 
       <div class="tabPanel" id="panel-ledger">
         <div class="tableWrap">
           <table>
             <thead>
-              <tr><th>Date</th><th>Narration</th><th>Ref</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Flags</th></tr>
+              <tr><th>Date</th><th>Narration</th><th>Category</th><th>Ref</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Flags</th></tr>
             </thead>
             <tbody id="ledgerBody"></tbody>
           </table>
@@ -190,8 +191,12 @@
         <div class="leadsWrap" id="leadsWrap"></div>
       </div>
 
-      <div class="tabPanel" id="panel-trail" style="display:none;">
+            <div class="tabPanel" id="panel-trail" style="display:none;">
         <div class="trailWrap" id="trailWrap"></div>
+      </div>
+
+      <div class="tabPanel" id="panel-categories" style="display:none;">
+        <div class="leadsWrap" id="categoriesWrap"></div>
       </div>
     </div>
   </div>
@@ -225,7 +230,7 @@ function renderSummary(d){
 function renderLedger(transactions){
   const body = document.getElementById('ledgerBody');
   if(!transactions.length){
-    body.innerHTML = '<tr><td colspan="7" class="empty">No transactions extracted.</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="empty">No transactions extracted.</td></tr>';
     return;
   }
   body.innerHTML = transactions.map(t => {
@@ -242,6 +247,7 @@ function renderLedger(transactions){
     return `<tr>
       <td class="dateCell">${t.date}</td>
       <td class="narrCell">${t.narration}</td>
+      <td class="mono" style="font-size:10px;color:var(--muted);">${(t.category || '').replace(/_/g,' ')}</td>
       <td class="mono" style="font-size:11px;color:var(--muted);">${t.ref_no || '—'}</td>
       <td class="amtDr">${t.debit ? fmtAmt(t.debit) : ''}</td>
       <td class="amtCr">${t.credit ? fmtAmt(t.credit) : ''}</td>
@@ -322,18 +328,45 @@ function renderTrail(trails){
   }).join('');
 }
 
+function renderCategories(transactions){
+  const wrap = document.getElementById('categoriesWrap');
+  if(!transactions.length){
+    wrap.innerHTML = '<div class="empty">No transactions to categorize.</div>';
+    return;
+  }
+  const summary = {};
+  transactions.forEach(t => {
+    const cat = t.category || 'OTHER';
+    if(!summary[cat]) summary[cat] = {count:0, debit:0, credit:0};
+    summary[cat].count += 1;
+    summary[cat].debit += t.debit || 0;
+    summary[cat].credit += t.credit || 0;
+  });
+  const rows = Object.entries(summary).sort((a,b) => b[1].count - a[1].count);
+  wrap.innerHTML = rows.map(([cat, s]) => `
+    <div class="leadCard">
+      <div>
+        <div class="leadName">${cat.replace(/_/g,' ')}</div>
+        <div class="leadSub">${s.count} TRANSACTION${s.count===1?'':'S'} &nbsp;·&nbsp; DEBIT ₹${fmtAmt(s.debit)} &nbsp;·&nbsp; CREDIT ₹${fmtAmt(s.credit)}</div>
+      </div>
+      <div class="leadAmt" style="color:var(--teal);">${s.count}</div>
+    </div>
+  `).join('');
+}
+
 function renderAll(d){
   renderSummary(d);
   renderLedger(d.transactions);
   renderLeads(d.accumulation_accounts, d.round_trips);
   renderTrail(d.trails);
+  renderCategories(d.transactions);
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    ['ledger','leads','trail'].forEach(name => {
+    ['ledger','leads','trail','categories'].forEach(name => {
       document.getElementById('panel-' + name).style.display = (name === tab.dataset.tab) ? 'block' : 'none';
     });
   });

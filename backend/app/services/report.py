@@ -15,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from app.services.categorization import category_summary
 
 HEADER_FONT = Font(name="Arial", bold=True, color="FFFFFF")
 HEADER_FILL = PatternFill(start_color="14181A", end_color="14181A", fill_type="solid")
@@ -129,7 +130,21 @@ def generate_excel_report(transactions, round_trips, accumulation_accounts, trai
         ws4.cell(row=i, column=2, value=a["net_accumulated"]).font = BODY_FONT
     _autosize_columns(ws4, 2, width=30)
 
-    # --- Sheet 5: Money Trail ---
+    # --- Sheet 5: Category Breakdown ---
+    ws_cat = wb.create_sheet("Category Breakdown")
+    cat_headers = ["Category", "Transaction Count", "Total Debit", "Total Credit"]
+    for c, h in enumerate(cat_headers, start=1):
+        ws_cat.cell(row=1, column=c, value=h)
+    _style_header_row(ws_cat, 1, len(cat_headers))
+    cats = category_summary(transactions)
+    for i, c in enumerate(cats, start=2):
+        ws_cat.cell(row=i, column=1, value=c["category"].replace("_", " ")).font = BODY_FONT
+        ws_cat.cell(row=i, column=2, value=c["count"]).font = BODY_FONT
+        ws_cat.cell(row=i, column=3, value=c["total_debit"]).font = BODY_FONT
+        ws_cat.cell(row=i, column=4, value=c["total_credit"]).font = BODY_FONT
+    _autosize_columns(ws_cat, len(cat_headers), width=22)
+
+    # --- Sheet 6: Money Trail ---
     ws5 = wb.create_sheet("Money Trail")
     mt_headers = ["Source Credit Date", "Source Credit Narration", "Source Amount",
                   "Fully Traced", "Step Date", "Step Narration", "Amount From This Credit"]

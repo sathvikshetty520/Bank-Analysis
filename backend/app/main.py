@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 
 from app.parsers.registry import parse_file
 from app.services.cleaning import clean_transactions
+from app.services.categorization import categorize_transactions, category_summary
 from app.services.graph_analysis import build_multi_account_graph, detect_round_trips, find_accumulation_accounts
 from app.services.money_trail import trace_all_credits
 from app.services.report import generate_excel_report, generate_pdf_report
@@ -55,6 +56,7 @@ async def upload_statement(
         raise HTTPException(status_code=422, detail=str(e))
 
     cleaned = clean_transactions(result.transactions)
+    cleaned = categorize_transactions(cleaned)
 
     if session_id and session_id in SESSION_STORE:
         SESSION_STORE[session_id][account_id] = cleaned
@@ -117,6 +119,12 @@ def get_money_trail(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     trails = trace_all_credits(_all_transactions(session_id))
     return {"trails": trails}
+
+@app.get("/analysis/categories/{session_id}")
+def get_category_summary(session_id: str):
+    if session_id not in SESSION_STORE:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"categories": category_summary(_all_transactions(session_id))}
 
 
 REPORTS_DIR = "generated_reports"

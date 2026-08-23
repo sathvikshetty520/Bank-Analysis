@@ -104,12 +104,38 @@ def get_graph_analysis(session_id: str):
     G = build_multi_account_graph(accounts)
     round_trips = detect_round_trips(G)
     accumulation = find_accumulation_accounts(G)
+
+    # Nodes/edges are aggregated per (from, to) pair for visualization -
+    # a real graph diagram doesn't need every individual transaction as
+    # a separate edge, just the total flow and count between two parties.
+    nodes = [
+        {"id": n, "is_uploaded_account": G.nodes[n].get("is_uploaded_account", False)}
+        for n in G.nodes()
+    ]
+    edge_agg = {}
+    for u, v, d in G.edges(data=True):
+        key = (u, v)
+        if key not in edge_agg:
+            edge_agg[key] = {"from": u, "to": v, "total_amount": 0.0, "count": 0, "confirmed_link": False}
+        edge_agg[key]["total_amount"] += d["amount"]
+        edge_agg[key]["count"] += 1
+        if d.get("confirmed_link"):
+            edge_agg[key]["confirmed_link"] = True
+    edges = list(edge_agg.values())
+
+    round_trip_node_ids = set()
+    for rt in round_trips:
+        round_trip_node_ids.update(rt["accounts_involved"])
+
     return {
         "accounts_in_session": list(accounts.keys()),
         "node_count": G.number_of_nodes(),
         "edge_count": G.number_of_edges(),
         "round_trips": round_trips,
         "accumulation_accounts": accumulation,
+        "nodes": nodes,
+        "edges": edges,
+        "round_trip_node_ids": list(round_trip_node_ids),
     }
 
 
@@ -119,6 +145,7 @@ def get_money_trail(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     trails = trace_all_credits(_all_transactions(session_id))
     return {"trails": trails}
+
 
 @app.get("/analysis/categories/{session_id}")
 def get_category_summary(session_id: str):

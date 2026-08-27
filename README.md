@@ -366,7 +366,7 @@ correctly with real cross-account data.
 ```bash
 cd backend
 pip install -r requirements.txt --break-system-packages
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 Then open `frontend/case_ledger.html` directly in a browser (no server

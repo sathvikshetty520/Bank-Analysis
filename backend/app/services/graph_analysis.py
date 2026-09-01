@@ -18,7 +18,7 @@ statements are added to the same investigation.
 import networkx as nx
 from app.models.transaction import Transaction
 
-
+NON_ENTITY_PLACEHOLDERS = {"INTERNAL_BULK_PAYMENT_BATCH", "UNKNOWN_UPI_COUNTERPARTY", "CASH_WITHDRAWAL"}
 def extract_counterparty(narration: str) -> str:
     """
     Bank narrations embed the other party's name/account in inconsistent
@@ -91,6 +91,8 @@ def detect_round_trips(G, max_window_days=30):
     for cycle in nx.simple_cycles(G):
         if len(cycle) < 2:
             continue
+        if any(node in NON_ENTITY_PLACEHOLDERS for node in cycle):
+            continue
         cycle_edges = []
         valid = True
         for i in range(len(cycle)):
@@ -113,7 +115,7 @@ def detect_round_trips(G, max_window_days=30):
 def find_accumulation_accounts(G, top_n=5):
     net_flow = {}
     for node in G.nodes():
-        if node == "INTERNAL_BULK_PAYMENT_BATCH" or node == "UNKNOWN_UPI_COUNTERPARTY":
+        if node in NON_ENTITY_PLACEHOLDERS:
             continue
         inflow = sum(d["amount"] for _, _, d in G.in_edges(node, data=True))
         outflow = sum(d["amount"] for _, _, d in G.out_edges(node, data=True))

@@ -15,6 +15,7 @@ Data Cleaning & Validation
 
 from app.models.transaction import Transaction
 from app.services.graph_analysis import extract_counterparty
+from app.services.categorization import categorize_transaction, NON_DUPLICATE_CATEGORIES
 
 REVERSAL_KEYWORDS = ["FAILED", "REVERSAL", "REVERSED", "BOUNCE", "RETURNED", "REV TXN", "REJECT"]
 
@@ -30,6 +31,9 @@ COUNTERPARTY_MATCH_THRESHOLD = 500
 def detect_duplicates(transactions):
     seen = {}
     for t in transactions:
+        category = t.category or categorize_transaction(t.narration)
+        if category in NON_DUPLICATE_CATEGORIES:
+            continue
         key = (t.date, round(t.debit, 2), round(t.credit, 2), t.narration.strip().lower(), t.ref_no)
         if key in seen:
             t.is_duplicate = True

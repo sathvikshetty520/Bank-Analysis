@@ -390,15 +390,16 @@ function renderFlowGraph(graphData){
   const links = graphData.edges.map(e => ({...e, source: e.from, target: e.to}));
 
   const maxAmount = d3.max(links, d => d.total_amount) || 1;
-  const widthScale = d3.scaleSqrt().domain([0, maxAmount]).range([1, 10]);
+  const widthScale = d3.scaleSqrt().domain([0, maxAmount]).range([1, 6]);
 
   svg.append('defs').append('marker')
-    .attr('id', 'arrowhead')
-    .attr('viewBox', '0 -5 10 10')
-    .attr('refX', 22).attr('refY', 0)
-    .attr('markerWidth', 6).attr('markerHeight', 6)
-    .attr('orient', 'auto')
-    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#7A7568');
+  .attr('id', 'arrowhead')
+  .attr('viewBox', '0 -5 10 10')
+  .attr('refX', 22).attr('refY', 0)
+  .attr('markerWidth', 6).attr('markerHeight', 6)
+  .attr('markerUnits', 'userSpaceOnUse')
+  .attr('orient', 'auto')
+  .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#7A7568');
 
   const simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(d => d.id).distance(120).strength(0.3))

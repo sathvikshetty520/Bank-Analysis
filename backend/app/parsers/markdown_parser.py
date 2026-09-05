@@ -44,6 +44,7 @@ class MarkdownTableParser(BaseParser):
 
     def _parse_date(self, val) -> datetime.date:
         s = str(val).strip()
+        s = re.sub(r"-\s+", "-", s)
         for fmt in ("%d/%m/%y", "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y", "%Y-%m-%d"):
             try:
                 return datetime.strptime(s, fmt).date()

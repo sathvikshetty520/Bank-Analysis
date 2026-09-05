@@ -19,6 +19,7 @@ import networkx as nx
 from app.models.transaction import Transaction
 
 NON_ENTITY_PLACEHOLDERS = {"INTERNAL_BULK_PAYMENT_BATCH", "UNKNOWN_UPI_COUNTERPARTY", "CASH_WITHDRAWAL"}
+MIN_AMOUNT_CONSISTENCY_RATIO = 0.5
 def extract_counterparty(narration: str) -> str:
     """
     Bank narrations embed the other party's name/account in inconsistent
@@ -85,8 +86,7 @@ def build_transaction_graph(transactions, owner_account_id):
             G.add_edge(counterparty, owner_account_id, amount=t.credit, date=t.date, narration=t.narration, ref_no=t.ref_no)
     return G
 
-
-def detect_round_trips(G, max_window_days=30):
+def detect_round_trips(G, max_window_days=30, min_amount_ratio=MIN_AMOUNT_CONSISTENCY_RATIO):
     round_trips = []
     for cycle in nx.simple_cycles(G):
         if len(cycle) < 2:
@@ -96,21 +96,26 @@ def detect_round_trips(G, max_window_days=30):
         cycle_edges = []
         valid = True
         for i in range(len(cycle)):
-            u, v = cycle[i], cycle[(i+1) % len(cycle)]
+            u, v = cycle[i], cycle[(i + 1) % len(cycle)]
             edge_data = G.get_edge_data(u, v)
             if not edge_data:
                 valid = False
                 break
-            first_edge = list(edge_data.values())[0]
-            cycle_edges.append({"from": u, "to": v, **first_edge})
+            best_edge = max(edge_data.values(), key=lambda d: d["amount"])
+            cycle_edges.append({"from": u, "to": v, **best_edge})
         if not valid or not cycle_edges:
             continue
+
         dates = [e["date"] for e in cycle_edges]
         if (max(dates) - min(dates)).days > max_window_days:
             continue
-        round_trips.append({"accounts_involved": cycle, "edges": cycle_edges, "span_days": (max(dates)-min(dates)).days})
-    return round_trips
 
+        amounts = [e["amount"] for e in cycle_edges]
+        if min(amounts) < min_amount_ratio * max(amounts):
+            continue
+
+        round_trips.append({"accounts_involved": cycle, "edges": cycle_edges, "span_days": (max(dates) - min(dates)).days})
+    return round_trips
 
 def find_accumulation_accounts(G, top_n=5):
     net_flow = {}
